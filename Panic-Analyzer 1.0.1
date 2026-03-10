@@ -1,0 +1,131 @@
+import SwiftUI
+import Vision
+import VisionKit
+import UIKit
+
+// MARK: - MODELS
+struct PanicError: Identifiable {
+    let id = UUID()
+    let code: String
+    let englishDesc: String
+    let hebrewDesc: String
+}
+
+struct PanicRecord: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let errorCode: String
+    let imei: String
+    let description: String
+}
+
+// MARK: - SCANNER BRIDGE
+struct ScannerView: UIViewControllerRepresentable {
+    var completion: (UIImage) -> Void
+    
+    func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
+        let scanner = VNDocumentCameraViewController()
+        scanner.delegate = context.coordinator
+        return scanner
+    }
+    
+    func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+    
+    class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
+        var completion: (UIImage) -> Void
+        init(completion: @escaping (UIImage) -> Void) { self.completion = completion }
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+            completion(scan.imageOfPage(at: 0))
+            controller.dismiss(animated: true)
+        }
+    }
+}
+
+// MARK: - MAIN VIEW
+struct ContentView: View {
+    @State private var logText: String = ""
+    @State private var imeiText: String = ""
+    @State private var results: [PanicError] = []
+    @State private var isHebrew: Bool = false
+    @State private var history: [PanicRecord] = []
+    @State private var showingScanner = false
+    
+    let knowledgeBase = [
+        PanicError(code: "mic1", englishDesc: "Charging Port Flex / Rear Mic", hebrewDesc: "פלקס שקע טעינה / מיקרופון אחורי"),
+        PanicError(code: "0x800", englishDesc: "Charging Port Data / Thermal", hebrewDesc: "נתוני שקע טעינה / חיישן טרמי"),
+        PanicError(code: "prs0", englishDesc: "Barometer - Charging Port", hebrewDesc: "חיישן ברומטר - שקע טעינה"),
+        PanicError(code: "ANS2", englishDesc: "NAND Flash Memory Error", hebrewDesc: "שגיאת רכיב זיכרון NAND")
+    ]
+
+    var body: some View {
+        TabView {
+            // TAB 1: ANALYZER
+            NavigationView {
+                VStack(spacing: 12) {
+                    Picker("Language", selection: $isHebrew) {
+                        Text("English").tag(false); Text("עברית").tag(true)
+                    }.pickerStyle(SegmentedPickerStyle()).padding(.horizontal)
+                    
+                    TextField("IMEI (Optional)", text: $imeiText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle()).padding(.horizontal)
+                    
+                    TextEditor(text: $logText).frame(height: 120).border(Color.gray.opacity(0.2))
+                        .padding(.horizontal)
+                    
+                    HStack {
+                        Button(action: { showingScanner = true }) {
+                            Label("Scan", systemImage: "viewfinder").frame(maxWidth: .infinity).padding().background(Color.green).foregroundColor(.white).cornerRadius(10)
+                        }
+                        Button(action: analyzeLog) {
+                            Label("Analyze", systemImage: "bolt.fill").frame(maxWidth: .infinity).padding().background(Color.blue).foregroundColor(.white).cornerRadius(10)
+                        }
+                    }.padding(.horizontal)
+                    
+                    ShareLink(item: exportContent, subject: Text("Repair Report"), message: Text("Diagnostic results for the device.")) {
+                        Label("Share Report", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity).padding().background(Color.purple).foregroundColor(.white).cornerRadius(10)
+                    }.padding(.horizontal)
+
+                    List(results) { error in
+                        Text(error.code).bold().foregroundColor(.red)
+                        Text(isHebrew ? error.hebrewDesc : error.englishDesc)
+                    }
+                }.navigationTitle("Panic Analyzer")
+                .sheet(isPresented: $showingScanner) { ScannerView(completion: processScannedImage) }
+            }.tabItem { Label("Analyze", systemImage: "magnifyingglass") }
+            
+            // TAB 2: HISTORY
+            NavigationView {
+                List(history) { record in
+                    VStack(alignment: .leading) {
+                        Text(record.errorCode).bold()
+                        Text("IMEI: \(record.imei)").font(.caption)
+                    }
+                }.navigationTitle("History")
+            }.tabItem { Label("History", systemImage: "clock") }
+        }
+    }
+
+    var exportContent: String {
+        var report = "--- Repair Report ---\nDate: \(Date().formatted())\nIMEI: \(imeiText)\n\n"
+        for error in results { report += "\(error.code): \(isHebrew ? error.hebrewDesc : error.englishDesc)\n" }
+        return report
+    }
+
+    func processScannedImage(_ image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
+        let request = VNRecognizeTextRequest { request, _ in
+            guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
+            let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            DispatchQueue.main.async { self.logText = text }
+        }
+        try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+    }
+
+    func analyzeLog() {
+        results = knowledgeBase.filter { logText.lowercased().contains($0.code.lowercased()) }
+        for error in results {
+            history.insert(PanicRecord(date: Date(), errorCode: error.code, imei: imeiText, description: error.englishDesc), at: 0)
+        }
+    }
+}
