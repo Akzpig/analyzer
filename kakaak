@@ -1,0 +1,202 @@
+import SwiftUI
+import Vision
+import VisionKit
+import UIKit
+
+// MARK: - MODELS
+struct PanicError: Identifiable {
+    let id = UUID()
+    let code: String
+    let englishDesc: String
+    let hebrewDesc: String
+    let suggestedPart: String
+}
+
+struct PanicRecord: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let errorCode: String
+    let imei: String
+    let description: String
+}
+
+// MARK: - KEYBOARD HELPER
+extension View {
+    func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+// MARK: - SCANNER BRIDGE
+struct ScannerView: UIViewControllerRepresentable {
+    var completion: (UIImage) -> Void
+    func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
+        let scanner = VNDocumentCameraViewController()
+        scanner.delegate = context.coordinator
+        return scanner
+    }
+    func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(completion: completion) }
+    
+    class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
+        var completion: (UIImage) -> Void
+        init(completion: @escaping (UIImage) -> Void) { self.completion = completion }
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+            completion(scan.imageOfPage(at: 0))
+            controller.dismiss(animated: true)
+        }
+    }
+}
+
+// MARK: - MAIN VIEW
+struct ContentView: View {
+    @State private var logText: String = ""
+    @State private var imeiText: String = ""
+    @State private var results: [PanicError] = []
+    @State private var isHebrew: Bool = false
+    @State private var history: [PanicRecord] = []
+    @State private var showingScanner = false
+    
+    // ULTIMATE KNOWLEDGE BASE (iPhone 11 - 17)
+    let knowledgeBase = [
+        // SMC & BOARD COMMUNICATION (Fix for your SMC BSC Log)
+        PanicError(code: "SMC BSC", englishDesc: "SMC Battery System Communication Failure", hebrewDesc: "תקלת תקשורת סוללה (SMC BSC)", suggestedPart: "Battery or Wireless Charge Coil"),
+        PanicError(code: "nl2c", englishDesc: "I2C Bus Failure (Sensor communication)", hebrewDesc: "תקלת אפיק תקשורת I2C (חיישנים)", suggestedPart: "Logic Board or Charging Port"),
+        
+        // CHARGING PORT / THERMAL / USB-C
+        PanicError(code: "mic1", englishDesc: "Primary Mic / Charging Port Flex", hebrewDesc: "מיקרופון ראשי / פלקס שקע טעינה", suggestedPart: "Charging Port Flex"),
+        PanicError(code: "0x800", englishDesc: "Thermal Sensor - Charging Port", hebrewDesc: "חיישן טרמי - שקע טעינה", suggestedPart: "Charging Port Flex"),
+        PanicError(code: "prs0", englishDesc: "Barometric Pressure Sensor", hebrewDesc: "חיישן ברומטר - שקע טעינה", suggestedPart: "Charging Port Flex"),
+        PanicError(code: "AOP", englishDesc: "Always On Processor Panic", hebrewDesc: "מעבד AOP - תקלת שקע טעינה/מיקרופון", suggestedPart: "Charging Port Flex"),
+        
+        // BATTERY
+        PanicError(code: "TG0B", englishDesc: "Battery Data Line (BMS)", hebrewDesc: "קו נתוני סוללה BMS", suggestedPart: "Battery"),
+        PanicError(code: "T0SZ", englishDesc: "Battery Temp Sensor", hebrewDesc: "חיישן טמפרטורת סוללה", suggestedPart: "Battery"),
+        
+        // UPPER SENSORS
+        PanicError(code: "mic2", englishDesc: "Rear Mic / Flash Flex", hebrewDesc: "מיקרופון אחורי / פלקס פלאש", suggestedPart: "Power/Flash Flex"),
+        PanicError(code: "mic3", englishDesc: "Front Mic / Proximity", hebrewDesc: "מיקרופון קדמי / חיישן קרבה", suggestedPart: "Front Sensor Flex"),
+        
+        // STORAGE & DISPLAY
+        PanicError(code: "ANS2", englishDesc: "NAND Storage Critical Error", hebrewDesc: "שגיאת רכיב זיכרון NAND", suggestedPart: "Motherboard"),
+        PanicError(code: "DCP", englishDesc: "Display Controller Processor", hebrewDesc: "מעבד בקר מסך", suggestedPart: "Screen or Logic Board")
+    ]
+
+    var body: some View {
+        TabView {
+            NavigationView {
+                VStack(spacing: 12) {
+                    Picker("Language", selection: $isHebrew) {
+                        Text("English").tag(false); Text("עברית").tag(true)
+                    }.pickerStyle(SegmentedPickerStyle()).padding(.horizontal)
+                    
+                    TextField("IMEI (Scanned or Type)", text: $imeiText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle()).padding(.horizontal)
+                    
+                    TextEditor(text: $logText)
+                        .frame(height: 140)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
+                        .padding(.horizontal)
+                    
+                    HStack(spacing: 10) {
+                        Button(action: { showingScanner = true }) {
+                            Label("Scan Log", systemImage: "viewfinder").frame(maxWidth: .infinity).padding().background(Color.green).foregroundColor(.white).cornerRadius(10)
+                        }
+                        
+                        Button(action: analyzeLog) {
+                            Label("Analyze", systemImage: "bolt.fill").frame(maxWidth: .infinity).padding().background(Color.blue).foregroundColor(.white).cornerRadius(10)
+                        }
+                        
+                        Button(action: resetAll) {
+                            Image(systemName: "trash").padding().background(Color.red.opacity(0.1)).foregroundColor(.red).cornerRadius(10)
+                        }
+                    }.padding(.horizontal)
+                    
+                    if !results.isEmpty && results.first?.code != "Unknown" {
+                        ShareLink(item: exportContent) {
+                            Label("Send Repair Report", systemImage: "paperplane.fill").frame(maxWidth: .infinity).padding().background(Color.purple).foregroundColor(.white).cornerRadius(10)
+                        }.padding(.horizontal)
+                    }
+
+                    List(results) { error in
+                        VStack(alignment: .leading) {
+                            Text(error.code).bold().foregroundColor(.red)
+                            Text(isHebrew ? error.hebrewDesc : error.englishDesc).font(.subheadline)
+                            Text("\(isHebrew ? "חלק להחלפה:" : "Suggested Part:") \(error.suggestedPart)").font(.caption).foregroundColor(.secondary)
+                        }
+                    }
+                }
+                .navigationTitle("Panic Analyzer")
+                .onTapGesture { self.hideKeyboard() }
+                .sheet(isPresented: $showingScanner) { ScannerView(completion: processScannedImage) }
+            }.tabItem { Label("Analyze", systemImage: "magnifyingglass") }
+            
+            NavigationView {
+                List(history) { record in
+                    VStack(alignment: .leading) {
+                        Text(record.errorCode).bold()
+                        Text("IMEI: \(record.imei)").font(.caption).foregroundColor(.gray)
+                    }
+                }.navigationTitle("History")
+            }.tabItem { Label("History", systemImage: "clock") }
+        }
+    }
+
+    var exportContent: String {
+        let codes = results.map { $0.code }.joined(separator: ", ")
+        let part = results.first?.suggestedPart ?? "Component"
+        if isHebrew {
+            return "--- דור הסלולר - דוח תיקון ---\nקוד תקלה: \(codes)\nהרכיב הפגום (\(part)) הוחלף בחדש. המכשיר נבדק ונמצא תקין לחלוטין לשימוש."
+        } else {
+            return "--- Dor Cellular - Repair Report ---\nError Code: \(codes)\nThe faulty part (\(part)) has been replaced with a new one. The device has been fully tested and everything came back normal."
+        }
+    }
+
+    func processScannedImage(_ image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
+        let request = VNRecognizeTextRequest { request, _ in
+            guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
+            
+            // JOIN ALL TEXT found in the scan to search everywhere
+            let fullText = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            
+            DispatchQueue.main.async {
+                // 1. Scan for IMEI anywhere in the document
+                if let imeiRange = fullText.range(of: #"\b\d{15}\b"#, options: .regularExpression) {
+                    self.imeiText = String(fullText[imeiRange])
+                }
+                
+                // 2. Scan for Technical Markers anywhere
+                if let techRange = fullText.range(of: #"(smc panic|sensor:?\s?\[.*?\]|panic\(|missing sensor).*?"#, options: [.regularExpression, .caseInsensitive]) {
+                    self.logText = String(fullText[techRange])
+                } else {
+                    // If no markers found, take the whole scan (up to 1000 chars) to let Analyze find the codes
+                    self.logText = String(fullText.prefix(1000))
+                }
+                
+                // 3. AUTO-ANALYZE after scan
+                self.analyzeLog()
+            }
+        }
+        request.recognitionLevel = .accurate
+        try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+    }
+
+    func analyzeLog() {
+        let cleanedLog = logText.lowercased()
+        let found = knowledgeBase.filter { cleanedLog.contains($0.code.lowercased()) }
+        
+        if found.isEmpty {
+            results = [PanicError(code: "Unknown", englishDesc: "No specific code found. Scroll down in the log and scan the 'Sensor' or 'SMC' section.", hebrewDesc: "לא נמצא קוד ספציפי. גלול מטה בלוג וסרוק את שורת ה-Sensor או ה-SMC.", suggestedPart: "Detailed Diagnosis Needed")]
+        } else {
+            results = found
+            for error in results {
+                history.insert(PanicRecord(date: Date(), errorCode: error.code, imei: imeiText, description: error.englishDesc), at: 0)
+            }
+        }
+    }
+    
+    func resetAll() {
+        logText = ""; imeiText = ""; results = []
+    }
+}
