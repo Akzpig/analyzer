@@ -1,0 +1,112 @@
+import SwiftUI
+
+struct PanicError {
+    let code: String
+    let englishDesc: String
+    let hebrewDesc: String
+}
+
+struct ContentView: View {
+    @State private var logText: String = ""
+    @State private var results: [PanicError] = []
+    @State private var isHebrew: Bool = true // Default to Hebrew for your local use
+    
+    // Comprehensive database for all models
+    let knowledgeBase = [
+        // Charging Port & Bottom Mic
+        PanicError(code: "mic1", englishDesc: "Charging Port Flex / Rear Mic (Check connection)", hebrewDesc: "פלקס שקע טעינה / מיקרופון אחורי (בדוק חיבור)"),
+        PanicError(code: "0x800", englishDesc: "Charging Port Data / Thermal Sensor (iPhone 13-15)", hebrewDesc: "נתוני שקע טעינה / חיישן טרמי (אייפון 13-15)"),
+        PanicError(code: "prs0", englishDesc: "Barometer Sensor - Usually Charging Port Flex", hebrewDesc: "חיישן ברומטר - בדרך כלל פלקס שקע טעינה"),
+        
+        // Power Button & Flash
+        PanicError(code: "mic2", englishDesc: "Power Button / Flash Flex (iPhone 11/12)", hebrewDesc: "פלקס כפתור הדלקה / פלאש (אייפון 11/12)"),
+        PanicError(code: "0x40000", englishDesc: "Power Button Flex Cable (iPhone 13+)", hebrewDesc: "פלקס כפתור הדלקה (אייפון 13 ומעלה)"),
+        
+        // Front Sensors / FaceID
+        PanicError(code: "mic3", englishDesc: "Front Camera / Proximity Sensor Flex (iPhone 13/14)", hebrewDesc: "חיישן קרבה / פלקס מצלמה קדמית (אייפון 13/14)"),
+        PanicError(code: "AOP Panic", englishDesc: "Always-On-Processor (Front sensor or Screen issue)", hebrewDesc: "מעבד תצוגה/חיישנים (חיישן קדמי או מסך תקול)"),
+        
+        // Logic Board & Memory
+        PanicError(code: "ANS2", englishDesc: "NAND Flash Memory Error (Storage failure)", hebrewDesc: "שגיאת זיכרון NAND (רכיב אחסון תקול)"),
+        PanicError(code: "SMC", englishDesc: "Battery Communication / BMS Board issue", hebrewDesc: "תקשורת סוללה / תקלה בלוח ה-BMS של הסוללה"),
+        PanicError(code: "Baseband", englishDesc: "Cellular Modem (No Service / Search issue)", hebrewDesc: "מודם סלולרי (בעיות קליטה / חיפוש שירות)"),
+        
+        // General Watchdog
+        PanicError(code: "WDT timeout", englishDesc: "Watchdog Timeout: System didn't respond (Hardware)", hebrewDesc: "שגיאת Watchdog: המערכת לא הגיבה (חומרה)"),
+        PanicError(code: "thermalmonitord", englishDesc: "Thermal Sensor Missing (Check all flex cables)", hebrewDesc: "חיישן חום חסר (בדוק את כל הפלקסים)")
+    ]
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 15) {
+                // Language Switcher
+                Picker("Language", selection: $isHebrew) {
+                    Text("English").tag(false)
+                    Text("עברית").tag(true)
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .padding(.horizontal)
+
+                // Input Area
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $logText)
+                        .frame(height: 180)
+                        .padding(4)
+                        .background(Color(.systemGray6))
+                        .cornerRadius(8)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.blue.opacity(0.3), lineWidth: 1))
+                    
+                    if logText.isEmpty {
+                        Text(isHebrew ? "הדבק כאן את הלוג..." : "Paste Panic Log here...")
+                            .foregroundColor(.gray)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 12)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .padding(.horizontal)
+
+                // Action Button
+                Button(action: analyzeLog) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                        Text(isHebrew ? "נתח תקלה" : "Analyze Error")
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+                .padding(.horizontal)
+
+                // Results List
+                List(results, id: \.code) { error in
+                    VStack(alignment: isHebrew ? .trailing : .leading, spacing: 5) {
+                        Text(error.code)
+                            .font(.system(.subheadline, design: .monospaced))
+                            .fontWeight(.bold)
+                            .foregroundColor(.red)
+                        
+                        Text(isHebrew ? error.hebrewDesc : error.englishDesc)
+                            .font(.body)
+                            .multilineTextAlignment(isHebrew ? .trailing : .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: isHebrew ? .trailing : .leading)
+                    .padding(.vertical, 4)
+                }
+                .listStyle(InsetGroupedListStyle())
+            }
+            .navigationTitle(isHebrew ? "מפענח פאניק" : "Panic Decoder")
+            .background(Color(.systemGroupedBackground))
+        }
+    }
+
+    func analyzeLog() {
+        // We filter the database to see if any of our codes appear in the pasted text
+        results = knowledgeBase.filter { 
+            logText.lowercased().contains($0.code.lowercased()) 
+        }
+    }
+}
