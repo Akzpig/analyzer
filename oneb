@@ -1,0 +1,84 @@
+// MARK: - KEYBOARD EXTENSION
+// This allows us to call .hideKeyboard() anywhere
+extension View {
+    func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+struct ContentView: View {
+    @State private var logText: String = ""
+    @State private var imeiText: String = ""
+    @State private var results: [PanicError] = []
+    @State private var isHebrew: Bool = false
+    @State private var history: [PanicRecord] = []
+    @State private var showingScanner = false
+    
+    // ... (knowledgeBase remains the same)
+
+    var body: some View {
+        TabView {
+            NavigationView {
+                // ADDING ONTAPGESTURE HERE TO RETRACT KEYBOARD
+                VStack(spacing: 12) {
+                    Picker("Language", selection: $isHebrew) {
+                        Text("English").tag(false); Text("עברית").tag(true)
+                    }.pickerStyle(SegmentedPickerStyle()).padding(.horizontal)
+                    
+                    TextField("IMEI (Optional)", text: $imeiText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle()).padding(.horizontal)
+                    
+                    TextEditor(text: $logText)
+                        .frame(height: 120)
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
+                        .padding(.horizontal)
+                    
+                    HStack {
+                        Button(action: { showingScanner = true }) {
+                            Label("Scan", systemImage: "viewfinder").frame(maxWidth: .infinity).padding().background(Color.green).foregroundColor(.white).cornerRadius(10)
+                        }
+                        Button(action: analyzeLog) {
+                            Label("Analyze", systemImage: "bolt.fill").frame(maxWidth: .infinity).padding().background(Color.blue).foregroundColor(.white).cornerRadius(10)
+                        }
+                    }.padding(.horizontal)
+                    
+                    // ... (ShareLink and List code)
+                }
+                .navigationTitle("Panic Analyzer")
+                .contentShape(Rectangle()) // Makes the whole area tappable
+                .onTapGesture { self.hideKeyboard() } // Closes keyboard on background tap
+                .sheet(isPresented: $showingScanner) { ScannerView(completion: processScannedImage) }
+            }.tabItem { Label("Analyze", systemImage: "magnifyingglass") }
+            
+            // ... (History Tab)
+        }
+    }
+
+    // MARK: - INTELLIGENT SCANNING
+    func processScannedImage(_ image: UIImage) {
+        guard let cgImage = image.cgImage else { return }
+        let request = VNRecognizeTextRequest { request, _ in
+            guard let observations = request.results as? [VNRecognizedTextObservation] else { return }
+            let fullScannedText = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            
+            DispatchQueue.main.async {
+                // 1. Extract IMEI (Look for 15 consecutive digits)
+                if let imeiRange = fullScannedText.range(of: #"\b\d{15}\b"#, options: .regularExpression) {
+                    self.imeiText = String(fullScannedText[imeiRange])
+                }
+                
+                // 2. Extract the Panic Body (Look for the word "panic" until a closing quote or newline)
+                if let panicRange = fullScannedText.range(of: #"panic\(.*?\)"#, options: [.regularExpression, .caseInsensitive]) {
+                    self.logText = String(fullScannedText[panicRange])
+                } else {
+                    // Fallback if no specific pattern found, just take the first 200 chars
+                    self.logText = String(fullScannedText.prefix(250))
+                }
+            }
+        }
+        request.recognitionLevel = .accurate
+        try? VNImageRequestHandler(cgImage: cgImage, options: [:]).perform([request])
+    }
+    
+    // ... (analyzeLog remains the same)
+}
