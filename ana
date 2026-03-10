@@ -1,0 +1,142 @@
+import SwiftUI
+import UIKit
+
+struct PanicRecord: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let errorCode: String
+    let description: String
+}
+
+struct ContentView: View {
+    @State private var logText: String = ""
+    @State private var results: [PanicError] = []
+    @State private var isHebrew: Bool = true
+    @State private var history: [PanicRecord] = []
+    
+    // Database remains the same
+    let knowledgeBase = [
+        PanicError(code: "mic1", englishDesc: "Charging Port Flex / Rear Mic", hebrewDesc: "פלקס שקע טעינה / מיקרופון אחורי"),
+        PanicError(code: "0x800", englishDesc: "Charging Port Data / Thermal (i13-15)", hebrewDesc: "נתוני שקע טעינה / חיישן טרמי (13-15)"),
+        PanicError(code: "prs0", englishDesc: "Barometer - Usually Charging Port", hebrewDesc: "חיישן ברומטר - בדרך כלל שקע טעינה"),
+        PanicError(code: "0x40000", englishDesc: "Power Button Flex Cable (i13+)", hebrewDesc: "פלקס כפתור הדלקה (13 ומעלה)"),
+        PanicError(code: "ANS2", englishDesc: "NAND Flash Memory Error", hebrewDesc: "שגיאת רכיב זיכרון NAND"),
+        PanicError(code: "SMC", englishDesc: "Battery Data / BMS Issue", hebrewDesc: "תקשורת סוללה / תקלה בלוח ה-BMS"),
+        PanicError(code: "WDT timeout", englishDesc: "Watchdog: Hardware Failure", hebrewDesc: "שגיאת Watchdog: תקלת חומרה כללית")
+    ]
+
+    var body: some View {
+        TabView {
+            // --- TAB 1: ANALYZER ---
+            NavigationView {
+                VStack(spacing: 15) {
+                    Picker("Language", selection: $isHebrew) {
+                        Text("English").tag(false)
+                        Text("עברית").tag(true)
+                    }.pickerStyle(SegmentedPickerStyle()).padding(.horizontal)
+
+                    Button(action: openAnalyticsSettings) {
+                        Label(isHebrew ? "1. פתח הגדרות לוג" : "1. Open Log Settings", systemImage: "gear")
+                            .frame(maxWidth: .infinity).padding().background(Color.orange.opacity(0.2)).cornerRadius(10)
+                    }.padding(.horizontal)
+
+                    VStack {
+                        TextEditor(text: $logText)
+                            .frame(height: 120).cornerRadius(8)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
+                        
+                        Button(action: pasteAndAnalyze) {
+                            Label(isHebrew ? "2. הדבק ונתח" : "2. Paste & Analyze", systemImage: "doc.on.clipboard")
+                                .bold().frame(maxWidth: .infinity).padding()
+                                .background(Color.blue).foregroundColor(.white).cornerRadius(10)
+                        }
+                    }.padding(.horizontal)
+
+                    List {
+                        ForEach(results, id: \.code) { error in
+                            VStack(alignment: isHebrew ? .trailing : .leading) {
+                                Text(error.code).fontWeight(.bold).foregroundColor(.red)
+                                Text(isHebrew ? error.hebrewDesc : error.englishDesc)
+                            }
+                        }
+                        if !results.isEmpty {
+                            ShareLink(item: results.map { "\($0.code): \(isHebrew ? $0.hebrewDesc : $0.englishDesc)" }.joined(separator: "\n")) {
+                                Label(isHebrew ? "3. שמור לפתקים" : "3. Save to Notes", systemImage: "square.and.arrow.up")
+                                    .padding().frame(maxWidth: .infinity).background(Color.green).foregroundColor(.white).cornerRadius(10)
+                            }
+                        }
+                    }.listStyle(InsetGroupedListStyle())
+                }
+                .navigationTitle(isHebrew ? "מפענח" : "Analyzer")
+                .background(Color(UIColor.systemGroupedBackground))
+            }
+            .tabItem { Label(isHebrew ? "בדיקה" : "Analyze", systemImage: "magnifyingglass") }
+
+            // --- TAB 2: HISTORY ---
+            NavigationView {
+                List {
+                    ForEach(history) { record in
+                        VStack(alignment: isHebrew ? .trailing : .leading) {
+                            Text(record.errorCode).fontWeight(.bold)
+                            Text(record.description).font(.subheadline).foregroundColor(.secondary)
+                            Text(record.date, style: .date).font(.caption2).foregroundColor(.gray)
+                        }
+                        .frame(maxWidth: .infinity, alignment: isHebrew ? .trailing : .leading)
+                    }
+                    .onDelete(perform: deleteHistory)
+                }
+                .navigationTitle(isHebrew ? "היסטוריה" : "History")
+                .toolbar { EditButton() }
+            }
+            .tabItem { Label(isHebrew ? "היסטוריה" : "History", systemImage: "clock.arrow.circlepath") }
+        }
+        .onAppear(perform: loadHistory)
+    }
+
+    // FUNCTIONS
+    func openAnalyticsSettings() {
+        if let url = URL(string: "App-Prefs:root=Privacy&path=PROBLEM_REPORTS") {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    func pasteAndAnalyze() {
+        if let string = UIPasteboard.general.string {
+            self.logText = string
+            let found = knowledgeBase.filter { logText.lowercased().contains($0.code.lowercased()) }
+            self.results = found
+            
+            // Save to history if we found an error
+            for error in found {
+                let newRecord = PanicRecord(date: Date(), errorCode: error.code, description: isHebrew ? error.hebrewDesc : error.englishDesc)
+                history.insert(newRecord, at: 0)
+                saveHistory()
+            }
+        }
+    }
+
+    func saveHistory() {
+        if let encoded = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(encoded, forKey: "PanicHistory")
+        }
+    }
+
+    func loadHistory() {
+        if let data = UserDefaults.standard.data(forKey: "PanicHistory"),
+           let decoded = try? JSONDecoder().decode([PanicRecord].self, from: data) {
+            history = decoded
+        }
+    }
+
+    func deleteHistory(at offsets: IndexSet) {
+        history.remove(atOffsets: offsets)
+        saveHistory()
+    }
+}
+
+// Simple Helper Struct
+struct PanicError {
+    let code: String
+    let englishDesc: String
+    let hebrewDesc: String
+}
